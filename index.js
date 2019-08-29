@@ -2,51 +2,36 @@ class Input {
     constructor(canvas) {
         this.keys = [];
         this.mouse = {
-            x: 0,
-            y: 0
-        }
+            pos: new Vec(2)
+        };
         document.addEventListener("keydown", (e) => { this.keys[e.keyCode] = true; });
         document.addEventListener("keyup", (e) => { this.keys[e.keyCode] = false; });
         document.addEventListener("mousemove", (e) => {
             let rect = canvas.getBoundingClientRect();
-            this.mouse.x = e.clientX - rect.left;
-            this.mouse.y = e.clientY - rect.top;
+            this.mouse.pos = new Vec([e.clientX - rect.left, e.clientY - rect.top]);
         });
     }
 }
 
 class Boid {
-    constructor(x, y) {
-        this.x = x;
-        this.y = y;
+    constructor(pos) {
+        this.pos = new Vec(pos);
         this.speed = 150;
         this.rot = Math.random() * Math.PI * 2;
         this.collisions = [];
-        this.detectionRadius = 50;
+        this.detectionRadius = 100;
     }
 
-    calculateForces(nearby, delta) {
-        this.separate(nearby, delta);
-        this.align(nearby, delta);
-        this.group(nearby, delta);
+    avoid(obstacles, delta) {
+        for (let i in obstacles) {
+            let obstacle = obstacles[i];
 
-        this.rot %= Math.PI * 2;
-    }
-
-    separate(nearby, delta) {
-        for (let i in nearby) {
-            let other = nearby[i];
-
-            if (other === this) continue;
+            let diff = Vec.sub(this.pos, obstacle.pos);
+            let dist = Vec.dist(this.pos, obstacle.pos);
             
-            let diffX = this.x - other.x;
-            let diffY = this.y - other.y;
-            
-            let dist = Math.sqrt(diffX * diffX + diffY * diffY);
-            
-            if (dist < 20) {
-                let tgtRot = Math.atan2(diffY, diffX);
-                this.rot = alerp(this.rot, tgtRot, 2 * delta);
+            if (dist < obstacle.radius) {
+                let tgtRot = Math.atan2(diff.getX(), diff.getY());
+                this.rot = alerp(this.rot, tgtRot, 8 * delta);
             }
         }
     }
@@ -57,83 +42,76 @@ class Boid {
 
             if (other === this) continue;
 
-            this.rot = alerp(this.rot, other.rot, 0.5 * delta);
+            this.rot = alerp(this.rot, other.rot, 1 * delta);
         }
     }
 
     group(nearby, delta) {
 
-        if (nearby.length === 1) return;
+        if (nearby.length === 0) return;
 
-        let totalX = 0;
-        let totalY = 0;
-
-        let count = 0;
+        let total = new Vec(2);
 
         for (let i in nearby) {
             let other = nearby[i];
-            
-            if (other === this) continue;
 
-            totalX += other.x;
-            totalY += other.y;
-
-            count++;
+            total.add(other.pos);
         }
 
-        let cx = totalX / count;
-        let cy = totalY / count;
+        let center = total.div(nearby.length);
+        let diff = center.sub(this.pos);
+        let angleToCenter = Math.atan2(diff.getY(), diff.getX());
 
-        let angleToCenter = Math.atan2(cy - this.y, cx - this.x);
+        this.rot = alerp(this.rot, angleToCenter, 0.5 * delta);
+    }
 
-        this.rot = alerp(this.rot, angleToCenter, delta);
+    jitter(delta) {
+        this.rot += (Math.random() * 5 - 2.5) * delta;
     }
 
     integrate(delta) {
-        this.x += this.speed * Math.cos(this.rot) * delta;
-        this.y += this.speed * Math.sin(this.rot) * delta;
+        this.rot %= Math.PI * 2;
 
-        if (this.x > canvas.width) this.x -= canvas.width;
-        if (this.y > canvas.height) this.y -= canvas.height;
-        if (this.x < 0) this.x += canvas.width;
-        if (this.y < 0) this.y += canvas.height;
-    }
+        this.pos.add(Vec.mul([Math.cos(this.rot), Math.sin(this.rot)], this.speed * delta));
 
-    setDir(dx, dy) {
-        this.rot = Math.atan2(dy, dx);
+        // TODO: change to MODULO
+        if (this.pos.getX() > canvas.width) this.pos.sub([canvas.width, 0]);
+        if (this.pos.getY() > canvas.height) this.pos.sub([0, canvas.height]);
+        if (this.pos.getX() < 0) this.pos.add([canvas.width, 0]);
+        if (this.pos.getY() < 0) this.pos.add([0, canvas.height]);
     }
 
     render(ctx) {
-        ctx.fillRect(this.x - 2, this.y - 2, 4, 4);
+        ctx.fillStyle = "white";
+        ctx.fillRect(this.pos.getX() - 2, this.pos.getY() - 2, 4, 4);
+
+        ctx.strokeStyle = "#1095b8";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(this.pos.getX(), this.pos.getY());
+        ctx.lineTo(this.pos.getX() - Math.cos(this.rot) * 10, this.pos.getY() - Math.sin(this.rot) * 10);
+        ctx.stroke();
     }
 
     renderDetectionRadius(ctx) {
         ctx.fillStyle = "#a045a07f";
         ctx.beginPath();
-        ctx.arc(this.x, this.y, this.detectionRadius, 0, Math.PI * 2);
+        ctx.arc(this.pos.getX(), this.pos.getY(), this.detectionRadius, 0, Math.PI * 2);
         ctx.closePath();
         ctx.fill();
-    }
-
-    renderDirection(ctx) {
-        ctx.strokeStyle = "#1095b8";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(this.x, this.y);
-        ctx.lineTo(this.x - Math.cos(this.rot) * 10, this.y - Math.sin(this.rot) * 10);
-        ctx.stroke();
     }
 }
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
+const input = new Input(canvas);
 
 let boids = [];
 
 function init() {
     requestAnimationFrame(render);
 
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 100; i++) {
         addBoid(Math.random() * canvas.width, Math.random() * canvas.height);
     }
 
@@ -143,8 +121,17 @@ function init() {
 function tick() {
     const delta = 1 / 60;
 
+    let mousePos = input.mouse.pos;
+
     for (let i in boids) {
-        boids[i].calculateForces(getNearbyBoids(boids[i].x, boids[i].y, boids[i].detectionRadius), delta);
+        let nearbyBoids = getNearbyBoids(boids[i].pos, boids[i].detectionRadius, boids[i]);
+        let nearbyObstacles = getNearbyObstacles(boids[i].pos, boids[i].detectionRadius, boids[i]);
+        nearbyObstacles.push({pos: mousePos, radius: 100});
+        
+        boids[i].avoid(nearbyObstacles, delta);
+        boids[i].align(nearbyBoids, delta);
+        boids[i].group(nearbyBoids, delta);
+        boids[i].jitter(delta);
     }
 
     for (let i in boids) {
@@ -158,26 +145,36 @@ function render() {
     for (let i in boids) {
         ctx.fillStyle = "white";
         boids[i].render(ctx);
-        boids[i].renderDirection(ctx);
     }
+
+    ctx.fillStyle = "#00ff00";
+    ctx.fillRect(input.mouse.pos.getX() - 2, input.mouse.pos.getY() - 2, 4, 4);
 
     requestAnimationFrame(render);
 }
 
 function addBoid(x, y) {
-    boids.push(new Boid(x, y));
+    boids.push(new Boid([x, y]));
 }
 
-function getNearbyBoids(x, y, r) {
+function getNearbyBoids(pos, r, exclude) {
     let nearby = [];
     for (let i in boids) {
-        let diffX = x - boids[i].x;
-        let diffY = y - boids[i].y;
-        let magSq = diffX * diffX + diffY * diffY;
-
-        if (magSq < r * r) nearby.push(boids[i]);
+        if (boids[i] === exclude) continue;
+        if (Vec.distSq(pos, boids[i].pos) < r * r) nearby.push(boids[i]);
     }
     return nearby;
+}
+
+function getNearbyObstacles(pos, r, exclude) {
+    let obstacles = [];
+
+    let nearbyBoids = getNearbyBoids(pos, r, exclude);
+    for (let i = 0; i < nearbyBoids.length; i++) {
+        obstacles.push({pos: new Vec(nearbyBoids[i].pos), radius: 20});
+    }
+
+    return obstacles;
 }
 
 function clearScreen() {
