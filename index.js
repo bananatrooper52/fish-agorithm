@@ -19,50 +19,57 @@ class Boid {
         this.speed = 150;
         this.rot = Math.random() * Math.PI * 2;
         this.collisions = [];
-        this.detectionRadius = 100;
+        this.viewRadius = 100;
+        this.fov = Math.PI * 1.5;
     }
 
-    avoid(obstacles, delta) {
-        for (let i in obstacles) {
-            let obstacle = obstacles[i];
+    avoid(neighborhood, delta) {
+        for (let i in neighborhood) {
+            let obstacle = neighborhood[i];
 
             let diff = Vec.sub(this.pos, obstacle.pos);
             let dist = Vec.dist(this.pos, obstacle.pos);
             
-            if (dist < obstacle.radius) {
-                let tgtRot = Math.atan2(diff.getX(), diff.getY());
+            if (dist < obstacle.rad) {
+                let tgtRot = Math.atan2(diff.getY(), diff.getX());
                 this.rot = alerp(this.rot, tgtRot, 8 * delta);
             }
         }
     }
 
-    align(nearby, delta) {
-        for (let i in nearby) {
-            let other = nearby[i];
+    align(neighborhood, delta) {
+        for (let i in neighborhood) {
+            let other = neighborhood[i];
 
-            if (other === this) continue;
+            if (other.rot === undefined) continue;
 
             this.rot = alerp(this.rot, other.rot, 1 * delta);
         }
     }
 
-    group(nearby, delta) {
+    group(neighborhood, delta) {
 
-        if (nearby.length === 0) return;
+        if (neighborhood.length === 0) return;
 
         let total = new Vec(2);
+        let count = 0;
 
-        for (let i in nearby) {
-            let other = nearby[i];
+        for (let i in neighborhood) {
+            let other = neighborhood[i];
+
+            if (other.rot === undefined) continue;
 
             total.add(other.pos);
+            count++;
         }
 
-        let center = total.div(nearby.length);
+        if (count === 0) return;
+
+        let center = total.div(count);
         let diff = center.sub(this.pos);
         let angleToCenter = Math.atan2(diff.getY(), diff.getX());
 
-        this.rot = alerp(this.rot, angleToCenter, 0.5 * delta);
+        this.rot = alerp(this.rot, angleToCenter, 0.3 * delta);
     }
 
     jitter(delta) {
@@ -121,16 +128,12 @@ function init() {
 function tick() {
     const delta = 1 / 60;
 
-    let mousePos = input.mouse.pos;
-
     for (let i in boids) {
-        let nearbyBoids = getNearbyBoids(boids[i].pos, boids[i].detectionRadius, boids[i]);
-        let nearbyObstacles = getNearbyObstacles(boids[i].pos, boids[i].detectionRadius, boids[i]);
-        nearbyObstacles.push({pos: mousePos, radius: 100});
+        let neighborhood = getNeighborhood(boids[i]);
         
-        boids[i].avoid(nearbyObstacles, delta);
-        boids[i].align(nearbyBoids, delta);
-        boids[i].group(nearbyBoids, delta);
+        boids[i].align(neighborhood, delta);
+        boids[i].group(neighborhood, delta);
+        boids[i].avoid(neighborhood, delta);
         boids[i].jitter(delta);
     }
 
@@ -142,39 +145,53 @@ function tick() {
 function render() {
     clearScreen();
 
+    renderCursor(ctx);
+
     for (let i in boids) {
         ctx.fillStyle = "white";
         boids[i].render(ctx);
     }
 
+    requestAnimationFrame(render);
+}
+
+function renderCursor(ctx) {
+    ctx.fillStyle = "#004000";
+    ctx.beginPath();
+    ctx.arc(input.mouse.pos.getX(), input.mouse.pos.getY(), 100, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.fill();
+    
     ctx.fillStyle = "#00ff00";
     ctx.fillRect(input.mouse.pos.getX() - 2, input.mouse.pos.getY() - 2, 4, 4);
-
-    requestAnimationFrame(render);
 }
 
 function addBoid(x, y) {
     boids.push(new Boid([x, y]));
 }
 
-function getNearbyBoids(pos, r, exclude) {
-    let nearby = [];
+function getNeighborhood(boid) {
+    let neighborhood = [];
     for (let i in boids) {
-        if (boids[i] === exclude) continue;
-        if (Vec.distSq(pos, boids[i].pos) < r * r) nearby.push(boids[i]);
+        if (boids[i] === boid) continue;
+    
+        let other = boids[i];
+        let dist = Vec.dist(other.pos, boid.pos);
+        if (dist < 100) {
+            //if (Math.atan2(Vec.sub(boid.pos, boids[i].pos)))
+            neighborhood.push({
+                pos: new Vec(other.pos),
+                rot: other.rot,
+                rad: 20
+            });
+        }
     }
-    return nearby;
-}
-
-function getNearbyObstacles(pos, r, exclude) {
-    let obstacles = [];
-
-    let nearbyBoids = getNearbyBoids(pos, r, exclude);
-    for (let i = 0; i < nearbyBoids.length; i++) {
-        obstacles.push({pos: new Vec(nearbyBoids[i].pos), radius: 20});
-    }
-
-    return obstacles;
+    neighborhood.push({
+        pos: new Vec(input.mouse.pos),
+        rot: undefined,
+        rad: 100
+    });
+    return neighborhood;
 }
 
 function clearScreen() {
